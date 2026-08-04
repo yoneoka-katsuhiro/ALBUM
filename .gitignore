@@ -1,0 +1,18 @@
+# Photo data
+input/*
+output/*
+!input/.gitkeep
+!output/.gitkeep
+
+# Generated archive
+ALBUM.zip
+ALBUM-v*.zip
+
+# macOS
+.DS_Store
+._*
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
