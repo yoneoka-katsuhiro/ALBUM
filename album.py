@@ -19,7 +19,6 @@ from typing import Optional
 
 INPUT_IMAGE_DIRNAME = "input_image"
 INPUT_GPS_DIRNAME = "input_gps"
-LEGACY_INPUT_DIRNAME = "input"
 OUTPUT_DIRNAME = "output"
 SUPPORTED_EXTENSIONS = {
     ".jpg",
@@ -293,24 +292,6 @@ def discover_gps_files(input_gps_dir: Path) -> tuple[list[Path], list[Path]]:
         else:
             unsupported.append(path)
     return supported, unsupported
-
-
-def has_visible_files(folder: Path) -> bool:
-    if not folder.exists():
-        return False
-    return any(path.is_file() and not is_ignored_path(path, folder) for path in folder.rglob("*"))
-
-
-def select_image_input_dir(project_dir: Path) -> Path:
-    input_image_dir = project_dir / INPUT_IMAGE_DIRNAME
-    legacy_input_dir = project_dir / LEGACY_INPUT_DIRNAME
-    if has_visible_files(input_image_dir) or not has_visible_files(legacy_input_dir):
-        return input_image_dir
-    emit(
-        f"USING_LEGACY_INPUT: {LEGACY_INPUT_DIRNAME}/ "
-        f"({INPUT_IMAGE_DIRNAME}/ is empty)"
-    )
-    return legacy_input_dir
 
 
 def sha256_file(path: Path) -> str:
@@ -1254,19 +1235,16 @@ def main() -> int:
     project_dir = Path(__file__).resolve().parent
     input_image_dir = project_dir / INPUT_IMAGE_DIRNAME
     input_gps_dir = project_dir / INPUT_GPS_DIRNAME
-    legacy_input_dir = project_dir / LEGACY_INPUT_DIRNAME
     output_dir = project_dir / OUTPUT_DIRNAME
     input_image_dir.mkdir(exist_ok=True)
     input_gps_dir.mkdir(exist_ok=True)
-    legacy_input_dir.mkdir(exist_ok=True)
     output_dir.mkdir(exist_ok=True)
-    selected_input_dir = select_image_input_dir(project_dir)
 
     summary = Summary()
     if not args.geotag_only:
-        supported, unsupported = discover_input_files(selected_input_dir)
+        supported, unsupported = discover_input_files(input_image_dir)
         emit(
-            f"SCAN_INPUT: folder={selected_input_dir.name} "
+            f"SCAN_INPUT: folder={input_image_dir.name} "
             f"supported={len(supported)} unsupported={len(unsupported)}"
         )
         print_unsupported(unsupported, summary)
@@ -1282,9 +1260,9 @@ def main() -> int:
         )
 
     if args.geotag:
-        geotag_images(
+            geotag_images(
             project_dir,
-            selected_input_dir,
+            input_image_dir,
             input_gps_dir,
             output_dir,
             exiftool,

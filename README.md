@@ -4,7 +4,7 @@
 
 ALBUM is a minimal pipeline for sorting and renaming photos by shooting date while preserving the original files by default.
 
-Version: `v0.2.0`
+Version: `v0.2.1`
 
 Repository: <https://github.com/yoneoka-katsuhiro/ALBUM>
 
@@ -20,7 +20,7 @@ ALBUM copies images from `input_image/` to date-based folders under `output/`. I
 
 ## Installation
 
-For normal use, download the release asset `ALBUM-v0.2.0.zip` from GitHub
+For normal use, download the release asset `ALBUM-v0.2.1.zip` from GitHub
 Releases. It expands to a clean `ALBUM/` directory:
 
 ```bash
@@ -47,8 +47,6 @@ ALBUM/
 │   └── .gitkeep
 ├── input_gps/
 │   └── .gitkeep
-├── input/
-│   └── .gitkeep
 ├── output/
 │   └── .gitkeep
 ├── .gitignore
@@ -59,9 +57,9 @@ ALBUM/
 └── README.md
 ```
 
-Photos placed in `input_image/`, legacy `input/`, GPS logs placed in `input_gps/`, and files generated in `output/` are excluded from version control by `.gitignore`. The `.gitkeep` files preserve the empty directory structure in Git.
+Photos placed in `input_image/`, GPS logs placed in `input_gps/`, and files generated in `output/` are excluded from version control by `.gitignore`. The `.gitkeep` files preserve the empty directory structure in Git.
 
-Copy photos from an SD card into `input_image/` before running ALBUM. Existing `input/` folders from older ALBUM releases are still accepted when `input_image/` is empty.
+Copy photos from an SD card into `input_image/` before running ALBUM.
 
 ## Usage
 
@@ -168,7 +166,7 @@ If no date can be read, `unknown_date` is used. ALBUM does not convert time zone
 
 GPS geotagging is disabled by default. It runs only when `--geotag` or `--geotag-only` is provided.
 
-This feature assumes that the camera clock and the GPS logger or smartphone clock were accurately synchronized at shooting time. If the clocks are offset, ALBUM may write incorrect coordinates. v0.2.0 does not automatically estimate or correct clock drift.
+This feature assumes that the camera clock and the GPS logger or smartphone clock were accurately synchronized at shooting time. If the clocks are offset, ALBUM may write incorrect coordinates. v0.2.1 does not automatically estimate or correct clock drift.
 
 Place GPS logs in `input_gps/`. ALBUM reads these formats:
 
@@ -218,7 +216,7 @@ ALBUM uses SHA-256 file hashes. If the same file content already exists anywhere
 
 ## Safety Behavior
 
-By default, ALBUM never modifies, moves, deletes, or overwrites source files in `input_image/` or legacy `input/`. It copies with `shutil.copy2` to preserve metadata where possible, verifies the copied file with SHA-256, and deletes only a newly created incomplete copy if verification fails.
+By default, ALBUM never modifies, moves, deletes, or overwrites source files in `input_image/`. It copies with `shutil.copy2` to preserve metadata where possible, verifies the copied file with SHA-256, and deletes only a newly created incomplete copy if verification fails.
 
 When `--remove-input` is provided, ALBUM deletes only supported source files that were copied to `output/` and passed SHA-256 verification. Duplicate files, unsupported files, hidden files, and files that hit errors are left in place.
 
@@ -231,5 +229,5 @@ Long runs print progress messages such as `SCAN_INPUT`, `PROGRESS_READ_INPUT`, `
 ## License
 
 The source code is released under the MIT License. Photos placed in
-`input_image/` or legacy `input/`, GPS logs placed in `input_gps/`, and
-organized copies written to `output/` are not covered by the software license.
+`input_image/`, GPS logs placed in `input_gps/`, and organized copies written
+to `output/` are not covered by the software license.

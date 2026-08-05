@@ -1,9 +1,7 @@
 # Photo data
-input/*
 input_image/*
 input_gps/*
 output/*
-!input/.gitkeep
 !input_image/.gitkeep
 !input_gps/.gitkeep
 !output/.gitkeep
