@@ -2,15 +2,15 @@
 
 **Automated Library Builder for Unsorted Media**
 
-ALBUM is a minimal pipeline for sorting and renaming photos by shooting date while preserving the original files.
+ALBUM is a minimal pipeline for sorting and renaming photos by shooting date while preserving the original files by default.
 
-Version: `v0.1.0`
+Version: `v0.1.1`
 
 Repository: <https://github.com/yoneoka-katsuhiro/ALBUM>
 
 ## Purpose
 
-ALBUM copies images from `input/` to date-based folders under `output/`. It reads shooting dates from image metadata, applies a unified file name, and leaves all source files untouched.
+ALBUM copies images from `input/` to date-based folders under `output/`. It reads shooting dates from image metadata, applies a unified file name, and leaves all source files untouched unless deletion is explicitly requested.
 
 ## Requirements
 
@@ -20,7 +20,7 @@ ALBUM copies images from `input/` to date-based folders under `output/`. It read
 
 ## Installation
 
-For normal use, download the release asset `ALBUM-v0.1.0.zip` from GitHub
+For normal use, download the release asset `ALBUM-v0.1.1.zip` from GitHub
 Releases. It expands to a clean `ALBUM/` directory:
 
 ```bash
@@ -71,6 +71,12 @@ Without a known location:
 
 ```bash
 ./album.sh --photographer yoneoka
+```
+
+Delete each input file after its output copy has passed SHA-256 verification:
+
+```bash
+./album.sh --photographer yoneoka --location yakushima --remove-input
 ```
 
 ## Photographer And Location Arguments
@@ -148,7 +154,9 @@ ALBUM uses SHA-256 file hashes. If the same file content already exists anywhere
 
 ## Safety Behavior
 
-ALBUM never modifies, moves, deletes, or overwrites files in `input/`. It copies with `shutil.copy2` to preserve metadata where possible, verifies the copied file with SHA-256, and deletes only a newly created incomplete copy if verification fails.
+By default, ALBUM never modifies, moves, deletes, or overwrites files in `input/`. It copies with `shutil.copy2` to preserve metadata where possible, verifies the copied file with SHA-256, and deletes only a newly created incomplete copy if verification fails.
+
+When `--remove-input` is provided, ALBUM deletes only supported input files that were copied to `output/` and passed SHA-256 verification. Duplicate files, unsupported files, hidden files, and files that hit errors are left in `input/`.
 
 ## License
 

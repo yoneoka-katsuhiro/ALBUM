@@ -13,6 +13,6 @@ ALBUM-v*.zip
 ._*
 
 # Python
-.venv/
 __pycache__/
 *.py[cod]
+.venv/

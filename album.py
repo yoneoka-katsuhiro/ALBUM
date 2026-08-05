@@ -54,6 +54,7 @@ class PhotoCandidate:
 @dataclass
 class Summary:
     copied: int = 0
+    input_deleted: int = 0
     duplicates_skipped: int = 0
     unknown_date: int = 0
     unsupported_skipped: int = 0
@@ -69,6 +70,21 @@ def parse_args() -> argparse.Namespace:
         "--location",
         default="unannotated",
         help="Optional shooting location. Default: unannotated.",
+    )
+    parser.add_argument(
+        "--remove-input",
+        dest="remove_input",
+        action="store_true",
+        help=(
+            "Delete each supported input file only after its output copy "
+            "passes SHA-256 verification."
+        ),
+    )
+    parser.add_argument(
+        "--delete-input-after-copy",
+        dest="remove_input",
+        action="store_true",
+        help=argparse.SUPPRESS,
     )
     args = parser.parse_args()
     validate_safe_token(parser, "--photographer", args.photographer)
@@ -314,6 +330,7 @@ def copy_candidates(
     output_dir: Path,
     output_hashes: set[str],
     summary: Summary,
+    delete_input_after_copy: bool,
 ) -> None:
     for (date_token, photographer, location), candidates in sorted(groups.items()):
         folder = output_dir / f"{date_token}_{location}"
@@ -354,6 +371,19 @@ def copy_candidates(
                 f"{status}: {display_path(candidate.path)} -> "
                 f"{display_path(destination)}"
             )
+            if delete_input_after_copy:
+                delete_input_file(candidate.path, summary)
+
+
+def delete_input_file(path: Path, summary: Summary) -> None:
+    try:
+        path.unlink()
+    except OSError as exc:
+        print(f"ERROR: {display_path(path)} (could not delete input after copy: {exc})")
+        summary.errors += 1
+        return
+    summary.input_deleted += 1
+    print(f"DELETED_INPUT: {display_path(path)}")
 
 
 def next_available_destination(
@@ -399,6 +429,7 @@ def print_unsupported(paths: list[Path], summary: Summary) -> None:
 
 def print_summary(summary: Summary) -> None:
     print(f"Copied: {summary.copied}")
+    print(f"Input files deleted: {summary.input_deleted}")
     print(f"Duplicates skipped: {summary.duplicates_skipped}")
     print(f"Unknown date: {summary.unknown_date}")
     print(f"Unsupported skipped: {summary.unsupported_skipped}")
@@ -420,7 +451,13 @@ def main() -> int:
     output_hashes = existing_output_hashes(output_dir, summary)
     candidates = collect_candidates(supported, output_hashes, exiftool, summary)
     groups = group_candidates(candidates, args.photographer, args.location)
-    copy_candidates(groups, output_dir, output_hashes, summary)
+    copy_candidates(
+        groups,
+        output_dir,
+        output_hashes,
+        summary,
+        args.remove_input,
+    )
     print_summary(summary)
     return 1 if summary.errors else 0
 
