@@ -1,0 +1,50 @@
+name: Test and build desktop packages
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            executable: dist/album/album
+            exiftool: dist/album/exiftool/exiftool
+            platform: macOS-arm64
+          - os: windows-2022
+            executable: dist/album/album.exe
+            exiftool: dist/album/exiftool/exiftool.exe
+            platform: Windows-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Update package installer
+        run: python -m pip install --upgrade pip
+      - name: Install fixed build dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Check code and regressions
+        run: |
+          python -m ruff check .
+          python -m ruff format --check .
+          python -m pytest -q
+      - name: Build runtime and bundled ExifTool
+        run: python scripts/build_release.py
+      - name: Exercise packaged executable with real JPEG and GPX
+        run: python scripts/smoke_test.py --executable "${{ matrix.executable }}" --exiftool "${{ matrix.exiftool }}"
+      - name: Upload verified archive and checksum
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALBUM-${{ matrix.platform }}
+          path: |
+            dist/ALBUM-*.zip
+            dist/ALBUM-*.sha256
+          if-no-files-found: error

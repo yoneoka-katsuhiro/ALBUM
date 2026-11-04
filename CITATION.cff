@@ -1,0 +1,12 @@
+cff-version: 1.2.0
+message: "Please cite this software when it contributes to your work."
+title: "ALBUM: Automated Library Builder for Unsorted Media"
+type: software
+authors:
+  - family-names: Yoneoka
+    given-names: Katsuhiro
+version: 0.3.0
+date-released: 2026-11-05
+url: "https://github.com/yoneoka-katsuhiro/ALBUM"
+repository-code: "https://github.com/yoneoka-katsuhiro/ALBUM"
+license: MIT
