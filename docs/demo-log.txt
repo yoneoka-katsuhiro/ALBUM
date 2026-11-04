@@ -1,0 +1,57 @@
+SCAN_INPUT: folder=input_image supported=2 unsupported=0
+SCAN_OUTPUT: supported=0
+PROGRESS_READ_INPUT: 1/2
+PROGRESS_READ_INPUT: 2/2
+SKIPPED_DUPLICATE: /private<demo>/input_image/sample.jpg
+PROGRESS_COPY: 1/1
+COPIED: /private<demo>/input_image/duplicate.jpg -> /private<demo>/output/20260102_field/20260102_demo0001_field.jpg
+GEOTAG_START: reading GPS logs
+SCAN_GPS: files=1
+GPS_POINTS: /private<demo>/input_gps/route.gpx points=2
+GPS_POINTS_TOTAL: 2
+GEOTAG_TARGETS: input_image=0 output=1
+PROGRESS_GEOTAG: 1/1
+GEOTAGGED: /private<demo>/output/20260102_field/20260102_demo0001_field.jpg (35.0010000, 139.0010000)
+CSV_WRITTEN: /private<demo>/output/20260102_field/album_gps.csv
+Copied: 1
+Input files deleted: 0
+Duplicates skipped: 1
+Unknown date: 0
+Unsupported skipped: 0
+GPS coordinates added: 1
+GPS already present: 0
+GPS no shooting date: 0
+GPS no time match: 0
+GPS CSV files written: 1
+Errors: 0
+
+SECOND RUN
+SCAN_INPUT: folder=input_image supported=2 unsupported=0
+SCAN_OUTPUT: supported=1
+PROGRESS_HASH_OUTPUT: 1/1
+PROGRESS_READ_INPUT: 1/2
+SKIPPED_DUPLICATE: /private<demo>/input_image/duplicate.jpg
+PROGRESS_READ_INPUT: 2/2
+SKIPPED_DUPLICATE: /private<demo>/input_image/sample.jpg
+GEOTAG_START: reading GPS logs
+SCAN_GPS: files=1
+GPS_POINTS: /private<demo>/input_gps/route.gpx points=2
+GPS_POINTS_TOTAL: 2
+GEOTAG_TARGETS: input_image=0 output=1
+PROGRESS_GEOTAG: 1/1
+GPS_ALREADY_PRESENT: /private<demo>/output/20260102_field/20260102_demo0001_field.jpg
+CSV_WRITTEN: /private<demo>/output/20260102_field/album_gps.csv
+Copied: 0
+Input files deleted: 0
+Duplicates skipped: 2
+Unknown date: 0
+Unsupported skipped: 0
+GPS coordinates added: 0
+GPS already present: 1
+GPS no shooting date: 0
+GPS no time match: 0
+GPS CSV files written: 1
+Errors: 0
+
+Verified: original SHA-256 8d6d08dbb90dafb48bcb0b4e23cd98bf822490971834b58d673ad0d9db2b5d59
+Verified: GPS 35.001, 139.001; unchanged decoded pixels; idempotent second run.

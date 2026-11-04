@@ -5,10 +5,13 @@ import argparse
 import csv
 import hashlib
 import json
+import math
+import os
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import xml.etree.ElementTree as ET
 from bisect import bisect_left
 from dataclasses import dataclass
@@ -17,6 +20,7 @@ from pathlib import Path
 from typing import Optional
 
 
+VERSION = "0.3.0"
 INPUT_IMAGE_DIRNAME = "input_image"
 INPUT_GPS_DIRNAME = "input_gps"
 OUTPUT_DIRNAME = "output"
@@ -103,9 +107,14 @@ class Summary:
     errors: int = 0
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="ALBUM: sort and rename photos by shooting date."
+def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="ALBUM: sort and rename photos by shooting date.")
+    parser.add_argument("--version", action="version", version=f"ALBUM {VERSION}")
+    parser.add_argument(
+        "--project-dir",
+        type=Path,
+        default=default_project_dir(),
+        help="Folder containing input_image/, input_gps/, and output/.",
     )
     parser.add_argument("--photographer", help="Photographer name.")
     parser.add_argument(
@@ -139,6 +148,11 @@ def parse_args() -> argparse.Namespace:
         help="Only add missing GPS coordinates and write CSV reports.",
     )
     parser.add_argument(
+        "--geotag-input",
+        action="store_true",
+        help="Also geotag input originals; preserve .album-original backups.",
+    )
+    parser.add_argument(
         "--gps-max-gap-seconds",
         type=int,
         default=300,
@@ -151,7 +165,9 @@ def parse_args() -> argparse.Namespace:
             "for example +09:00. Default: system local timezone."
         ),
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+    if args.geotag_input and not (args.geotag or args.geotag_only):
+        parser.error("--geotag-input requires --geotag or --geotag-only.")
     if args.geotag_only:
         args.geotag = True
         if args.remove_input:
@@ -172,23 +188,23 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-def validate_safe_token(
-    parser: argparse.ArgumentParser, argument_name: str, value: str
-) -> None:
+def default_project_dir() -> Path:
+    """Keep user data beside the executable, never inside PyInstaller's runtime."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
+def validate_safe_token(parser: argparse.ArgumentParser, argument_name: str, value: str) -> None:
     if SAFE_TOKEN_PATTERN.fullmatch(value):
         return
-    parser.error(
-        f"Invalid {argument_name}: {value!r}. "
-        "Use only these characters: A-Z a-z 0-9 - _"
-    )
+    parser.error(f"Invalid {argument_name}: {value!r}. Use only these characters: A-Z a-z 0-9 - _")
 
 
 def parse_utc_offset(value: str) -> timezone:
     match = UTC_OFFSET_PATTERN.fullmatch(value.strip())
     if not match:
-        raise argparse.ArgumentTypeError(
-            "Use a UTC offset such as +09:00, +0900, or -05:00."
-        )
+        raise argparse.ArgumentTypeError("Use a UTC offset such as +09:00, +0900, or -05:00.")
     hours = int(match.group("hour"))
     minutes = int(match.group("minute"))
     if hours > 23 or minutes > 59:
@@ -205,9 +221,12 @@ def local_timezone() -> timezone:
 
 
 def enable_line_buffering() -> None:
-    reconfigure = getattr(sys.stdout, "reconfigure", None)
-    if callable(reconfigure):
-        reconfigure(line_buffering=True)
+    # Redirected Windows streams may otherwise use a code page that cannot
+    # represent filenames. Keep CLI logs portable without changing OS settings.
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(encoding="utf-8", errors="backslashreplace", line_buffering=True)
 
 
 def emit(message: str) -> None:
@@ -222,11 +241,21 @@ def emit_progress(label: str, current: int, total: int, every: int = 100) -> Non
 
 
 def ensure_exiftool() -> str:
+    bundled = (
+        default_project_dir()
+        / "exiftool"
+        / ("exiftool.exe" if sys.platform == "win32" else "exiftool")
+    )
+    if bundled.is_file():
+        return str(bundled)
     exiftool = shutil.which("exiftool")
     if exiftool:
         return exiftool
     print("Error: ExifTool is not installed.", file=sys.stderr)
-    print("Install it with: brew install exiftool", file=sys.stderr)
+    print(
+        "Install ExifTool from https://exiftool.org/ (macOS: brew install exiftool).",
+        file=sys.stderr,
+    )
     raise SystemExit(1)
 
 
@@ -235,6 +264,10 @@ def is_supported_image(path: Path) -> bool:
 
 
 def is_ignored_path(path: Path, base_dir: Path) -> bool:
+    if path.is_symlink() or any(
+        parent.is_symlink() for parent in path.parents if is_relative_to(parent, base_dir)
+    ):
+        return True
     try:
         parts = path.relative_to(base_dir).parts
     except ValueError:
@@ -261,9 +294,7 @@ def discover_output_images(output_dir: Path) -> list[Path]:
     return [
         path
         for path in sorted(output_dir.rglob("*"), key=lambda item: str(item))
-        if path.is_file()
-        and not is_ignored_path(path, output_dir)
-        and is_supported_image(path)
+        if path.is_file() and not is_ignored_path(path, output_dir) and is_supported_image(path)
     ]
 
 
@@ -273,9 +304,7 @@ def discover_images(base_dir: Path) -> list[Path]:
     return [
         path
         for path in sorted(base_dir.rglob("*"), key=lambda item: str(item))
-        if path.is_file()
-        and not is_ignored_path(path, base_dir)
-        and is_supported_image(path)
+        if path.is_file() and not is_ignored_path(path, base_dir) and is_supported_image(path)
     ]
 
 
@@ -309,11 +338,85 @@ def existing_output_hashes(output_dir: Path, summary: Summary) -> set[str]:
     for index, path in enumerate(output_images, start=1):
         emit_progress("PROGRESS_HASH_OUTPUT", index, len(output_images))
         try:
-            hashes.add(sha256_file(path))
+            current_hash = sha256_file(path)
+            hashes.add(current_hash)
+            record = read_copy_provenance(path)
+            if record.get("output_sha256") == current_hash:
+                source_hash = record.get("source_sha256")
+                if isinstance(source_hash, str):
+                    hashes.add(source_hash)
         except OSError as exc:
             emit(f"ERROR: {display_path(path)} ({exc})")
             summary.errors += 1
     return hashes
+
+
+def provenance_path(path: Path) -> Path:
+    return path.with_name(f".{path.name}.album.json")
+
+
+def read_copy_provenance(path: Path) -> dict:
+    try:
+        record = json.loads(provenance_path(path).read_text(encoding="utf-8"))
+        return record if isinstance(record, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def record_copy_provenance(path: Path, source_hash: str) -> None:
+    """Link the input hash to a verified output hash, including later GPS edits."""
+    record = {
+        "album_version": VERSION,
+        "source_sha256": source_hash,
+        "output_sha256": sha256_file(path),
+    }
+    target = provenance_path(path)
+    with tempfile.NamedTemporaryFile(
+        mode="w", dir=target.parent, delete=False, encoding="utf-8"
+    ) as file:
+        temporary = Path(file.name)
+        json.dump(record, file, indent=2)
+        file.write("\n")
+    try:
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def refresh_copy_provenance(path: Path, previous_hash: str) -> None:
+    record = read_copy_provenance(path)
+    if record.get("output_sha256") == previous_hash and isinstance(
+        record.get("source_sha256"), str
+    ):
+        record_copy_provenance(path, record["source_sha256"])
+
+
+def run_exiftool(command: list[str]) -> subprocess.CompletedProcess:
+    """Pass UTF-8 arguments through stdin, avoiding Windows argv recoding.
+
+    ExifTool requires filename=UTF8 before -@ to enable wide-character file I/O.
+    Each argument occupies one unquoted line; paths containing line breaks are
+    rejected so a filename can never introduce another ExifTool option.
+    """
+    arguments = command[1:]
+    if any(any(character in argument for character in "\r\n\0") for argument in arguments):
+        raise RuntimeError("ExifTool arguments cannot contain CR, LF, or NUL control characters")
+    try:
+        result = subprocess.run(
+            [command[0], "-charset", "filename=UTF8", "-@", "-"],
+            input="\n".join(arguments) + "\n",
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            timeout=120,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError(f"Cannot run ExifTool: {exc}") from exc
+    if result.returncode:
+        raise RuntimeError((result.stderr or result.stdout).strip() or "ExifTool failed.")
+    return result
 
 
 def read_photo_date(exiftool: str, path: Path) -> PhotoDate:
@@ -325,12 +428,7 @@ def read_photo_date(exiftool: str, path: Path) -> PhotoDate:
         "-FileModifyDate",
         str(path),
     ]
-    result = subprocess.run(
-        command,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    result = run_exiftool(command)
     if result.returncode != 0:
         detail = (result.stderr or result.stdout).strip()
         raise RuntimeError(detail or "ExifTool failed.")
@@ -351,24 +449,22 @@ def read_photo_date(exiftool: str, path: Path) -> PhotoDate:
     return PhotoDate(date_token="unknown_date", sort_value=None)
 
 
-def read_geotag_photo_info(exiftool: str, path: Path) -> GeotagPhotoInfo:
+def read_geotag_photo_info(
+    exiftool: str, path: Path, local_tz: timezone = timezone.utc
+) -> GeotagPhotoInfo:
     command = [
         exiftool,
         "-json",
         "-n",
         "-DateTimeOriginal",
         "-CreateDate",
-        "-FileModifyDate",
+        "-OffsetTimeOriginal",
+        "-OffsetTimeDigitized",
         "-GPSLatitude",
         "-GPSLongitude",
         str(path),
     ]
-    result = subprocess.run(
-        command,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    result = run_exiftool(command)
     if result.returncode != 0:
         detail = (result.stderr or result.stdout).strip()
         raise RuntimeError(detail or "ExifTool failed.")
@@ -379,7 +475,7 @@ def read_geotag_photo_info(exiftool: str, path: Path) -> GeotagPhotoInfo:
         raise RuntimeError(f"ExifTool returned invalid JSON: {exc}") from exc
 
     metadata = values[0] if values else {}
-    shot_datetime = metadata_datetime(metadata)
+    shot_datetime = metadata_datetime(metadata, local_tz)
     latitude = metadata_float(metadata.get("GPSLatitude"))
     longitude = metadata_float(metadata.get("GPSLongitude"))
     if not valid_coordinate(latitude, longitude):
@@ -393,13 +489,29 @@ def read_geotag_photo_info(exiftool: str, path: Path) -> GeotagPhotoInfo:
     )
 
 
-def metadata_datetime(metadata: dict[str, object]) -> Optional[datetime]:
-    for tag in DATE_TAGS:
+def metadata_datetime(
+    metadata: dict[str, object], local_tz: timezone = timezone.utc
+) -> Optional[datetime]:
+    """Use capture timestamps only; filesystem modification is not capture time."""
+    for tag, offset_tag in (
+        ("DateTimeOriginal", "OffsetTimeOriginal"),
+        ("CreateDate", "OffsetTimeDigitized"),
+    ):
         value = metadata.get(tag)
         if not isinstance(value, str) or not value.strip():
             continue
         parsed = parse_exif_datetime(value)
         if parsed:
+            offset = metadata.get(offset_tag)
+            embedded = re.search(r"([+-]\d{2}:?\d{2}|Z)$", value.strip())
+            if embedded:
+                offset = "+00:00" if embedded[1] == "Z" else embedded[1]
+            if isinstance(offset, str) and offset.strip():
+                try:
+                    parsed = parsed.replace(tzinfo=parse_utc_offset(offset))
+                except argparse.ArgumentTypeError:
+                    return None
+                return parsed.astimezone(local_tz).replace(tzinfo=None)
             return parsed
     return None
 
@@ -533,13 +645,12 @@ def parse_nmea_log(path: Path, fallback_tz: timezone) -> list[GPSPoint]:
             if not text:
                 continue
             if text.startswith("@"):
-                offsets = re.findall(r"[+-]\d{4}", text)
-                if offsets:
-                    local_tz = parse_utc_offset(offsets[0])
+                # NMEA RMC timestamps are UTC; a logger header must not override
+                # the explicitly selected camera timezone.
                 continue
             if not text.startswith(("$GPRMC", "$GNRMC")):
                 continue
-            point = parse_rmc_sentence(text, local_tz, path.name)
+            point = parse_rmc_sentence(text, local_tz, str(path))
             if point:
                 points.append(point)
     return points
@@ -547,6 +658,15 @@ def parse_nmea_log(path: Path, fallback_tz: timezone) -> list[GPSPoint]:
 
 def parse_rmc_sentence(sentence: str, local_tz: timezone, source: str) -> Optional[GPSPoint]:
     body = sentence.split("*", 1)[0]
+    if "*" in sentence:
+        checksum = 0
+        for character in body.lstrip("$"):
+            checksum ^= ord(character)
+        try:
+            if checksum != int(sentence.split("*", 1)[1].strip(), 16):
+                return None
+        except ValueError:
+            return None
     fields = body.split(",")
     if len(fields) < 10 or fields[2] != "A":
         return None
@@ -564,7 +684,11 @@ def parse_nmea_datetime(time_value: str, date_value: str, local_tz: timezone) ->
     try:
         hour = int(time_value[0:2])
         minute = int(time_value[2:4])
-        second = int(float(time_value[4:]))
+        seconds = float(time_value[4:])
+        if not math.isfinite(seconds) or not 0 <= seconds < 60:
+            return None
+        second = int(seconds)
+        microsecond = int(round((seconds - second) * 1_000_000))
         day = int(date_value[0:2])
         month = int(date_value[2:4])
         year = int(date_value[4:6])
@@ -572,7 +696,9 @@ def parse_nmea_datetime(time_value: str, date_value: str, local_tz: timezone) ->
         return None
     year += 2000 if year < 70 else 1900
     try:
-        utc_time = datetime(year, month, day, hour, minute, second, tzinfo=timezone.utc)
+        utc_time = datetime(
+            year, month, day, hour, minute, second, tzinfo=timezone.utc
+        ) + timedelta(microseconds=microsecond)
     except ValueError:
         return None
     return utc_time.astimezone(local_tz).replace(tzinfo=None)
@@ -588,6 +714,8 @@ def parse_nmea_coordinate(value: str, hemisphere: str) -> Optional[float]:
         degrees = int(value[:degree_digits])
         minutes = float(value[degree_digits:])
     except ValueError:
+        return None
+    if degrees < 0 or not 0 <= minutes < 60:
         return None
     coordinate = degrees + minutes / 60.0
     if hemisphere in {"S", "W"}:
@@ -611,7 +739,7 @@ def parse_gpx(path: Path, local_tz: timezone) -> list[GPSPoint]:
                     timestamp=timestamp,
                     latitude=latitude,
                     longitude=longitude,
-                    source=path.name,
+                    source=str(path),
                 )
             )
     return points
@@ -623,12 +751,8 @@ def parse_kml(path: Path, local_tz: timezone) -> list[GPSPoint]:
     for track in root.iter():
         if element_name(track) != "Track":
             continue
-        whens = [
-            item.text or "" for item in track.iter() if element_name(item) == "when"
-        ]
-        coords = [
-            item.text or "" for item in track.iter() if element_name(item) == "coord"
-        ]
+        whens = [item.text or "" for item in track.iter() if element_name(item) == "when"]
+        coords = [item.text or "" for item in track.iter() if element_name(item) == "coord"]
         for when_text, coord_text in zip(whens, coords):
             timestamp = parse_iso_datetime_to_local(when_text, local_tz)
             coordinate = parse_kml_coordinate(coord_text)
@@ -639,7 +763,7 @@ def parse_kml(path: Path, local_tz: timezone) -> list[GPSPoint]:
                         timestamp=timestamp,
                         latitude=latitude,
                         longitude=longitude,
-                        source=path.name,
+                        source=str(path),
                     )
                 )
 
@@ -657,7 +781,7 @@ def parse_kml(path: Path, local_tz: timezone) -> list[GPSPoint]:
                     timestamp=timestamp,
                     latitude=latitude,
                     longitude=longitude,
-                    source=path.name,
+                    source=str(path),
                 )
             )
     return points
@@ -684,7 +808,7 @@ def parse_geojson(path: Path, local_tz: timezone) -> list[GPSPoint]:
                         timestamp=timestamp,
                         latitude=latitude,
                         longitude=longitude,
-                        source=path.name,
+                        source=str(path),
                     )
                 )
     return points
@@ -827,9 +951,7 @@ def group_candidates(
     return groups
 
 
-def existing_max_number(
-    folder: Path, date_token: str, photographer: str, location: str
-) -> int:
+def existing_max_number(folder: Path, date_token: str, photographer: str, location: str) -> int:
     if not folder.exists():
         return 0
     pattern = re.compile(
@@ -866,18 +988,23 @@ def copy_and_verify(
     expected_hash: str,
 ) -> bool:
     destination.parent.mkdir(parents=True, exist_ok=True)
-    destination_existed = destination.exists()
+    created = False
     try:
-        shutil.copy2(source, destination)
+        # Exclusive creation prevents overwriting files created after name selection.
+        with destination.open("xb") as target:
+            created = True
+            with source.open("rb") as original:
+                shutil.copyfileobj(original, target)
+        shutil.copystat(source, destination)
         copied_hash = sha256_file(destination)
     except Exception:
-        if not destination_existed and destination.exists():
+        if created and destination.exists():
             destination.unlink(missing_ok=True)
         raise
 
     if copied_hash == expected_hash:
         return True
-    if not destination_existed and destination.exists():
+    if created and destination.exists():
         destination.unlink(missing_ok=True)
     return False
 
@@ -921,6 +1048,13 @@ def copy_candidates(
                 summary.errors += 1
                 continue
 
+            try:
+                record_copy_provenance(destination, candidate.sha256)
+            except OSError as exc:
+                emit(f"ERROR: could not record copy provenance ({exc}); input retained")
+                summary.errors += 1
+                continue
+
             output_hashes.add(candidate.sha256)
             summary.copied += 1
             if candidate.photo_date.date_token == "unknown_date":
@@ -928,12 +1062,15 @@ def copy_candidates(
                 status = "UNKNOWN_DATE"
             else:
                 status = "COPIED"
-            emit(
-                f"{status}: {display_path(candidate.path)} -> "
-                f"{display_path(destination)}"
-            )
+            emit(f"{status}: {display_path(candidate.path)} -> {display_path(destination)}")
             if delete_input_after_copy:
-                delete_input_file(candidate.path, summary)
+                try:
+                    if sha256_file(candidate.path) != candidate.sha256:
+                        raise OSError("input changed since copy; retained")
+                    delete_input_file(candidate.path, summary)
+                except OSError as exc:
+                    emit(f"ERROR: {display_path(candidate.path)} ({exc})")
+                    summary.errors += 1
 
 
 def delete_input_file(path: Path, summary: Summary) -> None:
@@ -957,6 +1094,8 @@ def next_available_destination(
     number = start_number
     while number <= 9999:
         destination = destination_for(output_dir, candidate, photographer, location, number)
+        if destination.parent.is_symlink():
+            raise RuntimeError("refusing to write through a symbolic-link output folder")
         if not destination.exists():
             return destination
         number += 1
@@ -983,6 +1122,7 @@ def geotag_images(
     local_tz: timezone,
     max_gap_seconds: int,
     summary: Summary,
+    include_input: bool = False,
 ) -> None:
     emit("GEOTAG_START: reading GPS logs")
     gps_points = parse_gps_points(input_gps_dir, local_tz, summary)
@@ -991,20 +1131,17 @@ def geotag_images(
         summary.errors += 1
         return
 
-    input_images = discover_images(image_input_dir)
+    input_images = discover_images(image_input_dir) if include_input else []
     output_images = discover_output_images(output_dir)
     targets = input_images + output_images
-    emit(
-        f"GEOTAG_TARGETS: {image_input_dir.name}={len(input_images)} "
-        f"output={len(output_images)}"
-    )
+    emit(f"GEOTAG_TARGETS: {image_input_dir.name}={len(input_images)} output={len(output_images)}")
 
     records: list[GeotagRecord] = []
     timestamps = [point.timestamp for point in gps_points]
     for index, path in enumerate(targets, start=1):
         emit_progress("PROGRESS_GEOTAG", index, len(targets))
         try:
-            info = read_geotag_photo_info(exiftool, path)
+            info = read_geotag_photo_info(exiftool, path, local_tz)
         except RuntimeError as exc:
             emit(f"ERROR: {display_path(path)} ({exc})")
             summary.errors += 1
@@ -1052,8 +1189,14 @@ def geotag_images(
 
         latitude, longitude = coordinate
         try:
+            previous_hash = sha256_file(path)
+            if is_relative_to(path, image_input_dir):
+                backup = path.with_name(path.name + ".album-original")
+                if not copy_and_verify(path, backup, sha256_file(path)):
+                    raise RuntimeError("Input backup verification failed")
             write_gps_tags(exiftool, path, latitude, longitude)
-        except RuntimeError as exc:
+            refresh_copy_provenance(path, previous_hash)
+        except (RuntimeError, OSError) as exc:
             emit(f"ERROR: {display_path(path)} ({exc})")
             summary.errors += 1
             records.append(
@@ -1075,10 +1218,7 @@ def geotag_images(
                 longitude=longitude,
             )
         )
-        emit(
-            f"GEOTAGGED: {display_path(path)} "
-            f"({latitude:.7f}, {longitude:.7f})"
-        )
+        emit(f"GEOTAGGED: {display_path(path)} ({latitude:.7f}, {longitude:.7f})")
 
     write_geotag_csvs(records, project_dir, image_input_dir, output_dir, summary)
 
@@ -1094,7 +1234,12 @@ def coordinate_for_time(
     after = points[insertion] if insertion < len(points) else None
     max_gap = timedelta(seconds=max_gap_seconds)
 
-    if before and after and before.timestamp <= shot_datetime <= after.timestamp:
+    if (
+        before
+        and after
+        and before.source == after.source
+        and before.timestamp <= shot_datetime <= after.timestamp
+    ):
         before_gap = shot_datetime - before.timestamp
         after_gap = after.timestamp - shot_datetime
         if before_gap <= max_gap and after_gap <= max_gap:
@@ -1103,7 +1248,8 @@ def coordinate_for_time(
                 return before.latitude, before.longitude
             ratio = before_gap.total_seconds() / interval
             latitude = before.latitude + (after.latitude - before.latitude) * ratio
-            longitude = before.longitude + (after.longitude - before.longitude) * ratio
+            delta = (after.longitude - before.longitude + 180) % 360 - 180
+            longitude = (before.longitude + delta * ratio + 180) % 360 - 180
             return latitude, longitude
 
     nearest = None
@@ -1121,6 +1267,28 @@ def coordinate_for_time(
 
 
 def write_gps_tags(exiftool: str, path: Path, latitude: float, longitude: float) -> None:
+    """Edit and validate a temporary copy before replacing the target."""
+    with tempfile.NamedTemporaryFile(
+        prefix=".album-gps-", suffix=path.suffix, dir=path.parent, delete=False
+    ) as file:
+        temporary = Path(file.name)
+    try:
+        shutil.copy2(path, temporary)
+        _write_gps_tags(exiftool, temporary, latitude, longitude)
+        check = read_geotag_photo_info(exiftool, temporary)
+        if (
+            check.latitude is None
+            or check.longitude is None
+            or abs(check.latitude - latitude) > 0.000001
+            or abs(check.longitude - longitude) > 0.000001
+        ):
+            raise RuntimeError("GPS read-back verification failed; target retained")
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _write_gps_tags(exiftool: str, path: Path, latitude: float, longitude: float) -> None:
     command = [
         exiftool,
         "-overwrite_original",
@@ -1131,7 +1299,7 @@ def write_gps_tags(exiftool: str, path: Path, latitude: float, longitude: float)
         f"-GPSLongitudeRef={'E' if longitude >= 0 else 'W'}",
         str(path),
     ]
-    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    result = run_exiftool(command)
     if result.returncode != 0:
         detail = (result.stderr or result.stdout).strip()
         raise RuntimeError(detail or "ExifTool failed while writing GPS tags.")
@@ -1176,7 +1344,7 @@ def write_geotag_csv(csv_path: Path, records: list[GeotagRecord], project_dir: P
         for record in sorted(records, key=lambda item: str(item.path)):
             writer.writerow(
                 [
-                    record.path.name,
+                    str(record.path.relative_to(project_dir)),
                     format_datetime(record.shot_datetime),
                     format_coordinate(record.latitude),
                     format_coordinate(record.longitude),
@@ -1201,7 +1369,7 @@ def is_relative_to(path: Path, base_dir: Path) -> bool:
 
 
 def display_path(path: Path) -> str:
-    project_dir = Path(__file__).resolve().parent
+    project_dir = default_project_dir()
     try:
         return str(path.relative_to(project_dir))
     except ValueError:
@@ -1228,14 +1396,17 @@ def print_summary(summary: Summary) -> None:
     emit(f"Errors: {summary.errors}")
 
 
-def main() -> int:
+def _main() -> int:
     enable_line_buffering()
     args = parse_args()
     exiftool = ensure_exiftool()
-    project_dir = Path(__file__).resolve().parent
+    project_dir = args.project_dir.expanduser().resolve()
+    project_dir.mkdir(parents=True, exist_ok=True)
     input_image_dir = project_dir / INPUT_IMAGE_DIRNAME
     input_gps_dir = project_dir / INPUT_GPS_DIRNAME
     output_dir = project_dir / OUTPUT_DIRNAME
+    if any(folder.is_symlink() for folder in (input_image_dir, input_gps_dir, output_dir)):
+        raise OSError("Project data folders must not be symbolic links")
     input_image_dir.mkdir(exist_ok=True)
     input_gps_dir.mkdir(exist_ok=True)
     output_dir.mkdir(exist_ok=True)
@@ -1260,7 +1431,7 @@ def main() -> int:
         )
 
     if args.geotag:
-            geotag_images(
+        geotag_images(
             project_dir,
             input_image_dir,
             input_gps_dir,
@@ -1269,10 +1440,19 @@ def main() -> int:
             args.gps_timezone_info,
             args.gps_max_gap_seconds,
             summary,
+            args.geotag_input,
         )
 
     print_summary(summary)
     return 1 if summary.errors else 0
+
+
+def main() -> int:
+    try:
+        return _main()
+    except (OSError, RuntimeError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

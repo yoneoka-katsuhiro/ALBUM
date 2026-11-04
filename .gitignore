@@ -18,3 +18,10 @@ ALBUM-v*.zip
 __pycache__/
 *.py[cod]
 .venv/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+vendor/
+*.spec
+demo/output/
