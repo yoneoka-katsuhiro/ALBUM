@@ -18,6 +18,8 @@ On macOS, run `./album` from Terminal. On Windows, run `.\album.exe` from PowerS
 
 `--photographer` is required for copying. `--location` defaults to `unannotated`. Both accept only ASCII letters, digits, hyphens, and underscores. Original filenames may contain other characters.
 
+Japanese characters, accented Latin characters, and spaces in source paths are passed to ExifTool through UTF-8 input; no Windows code-page change is needed. CR, LF, and NUL control characters in paths are rejected before ExifTool runs. ExifTool documents limitations for some Windows filenames containing Unicode code points above U+FFFF, so that category is not claimed as supported. Redirected ALBUM logs use UTF-8.
+
 ALBUM searches subfolders recursively and reads `DateTimeOriginal`, `CreateDate`, and `FileModifyDate` in that order. The date is the calendar date written in the selected metadata; sorting does not normalize timezone offsets. `FileModifyDate` is a fallback, not evidence of capture time. If none is valid, the folder name begins with `unknown_date`.
 
 Within each date/photographer/location group, ALBUM sorts by timestamp and then filename. New files continue the existing sequence from `0001` to `9999`. It refuses to exceed `9999` or overwrite an existing destination. For example:

@@ -27,7 +27,12 @@ def main() -> None:
         raise SystemExit("ExifTool is required")
     with tempfile.TemporaryDirectory(prefix="album-demo-") as temporary:
         project = Path(temporary)
-        transcript = exercise(project, [sys.executable, str(ROOT / "album.py")], exiftool)
+        transcript = exercise(
+            project,
+            [sys.executable, str(ROOT / "album.py")],
+            exiftool,
+            unicode_filenames=False,
+        )
         transcript = transcript.replace(str(project), "<demo>")
         (ROOT / "docs" / "demo-log.txt").write_text(transcript, encoding="utf-8")
         demo = ROOT / "demo"

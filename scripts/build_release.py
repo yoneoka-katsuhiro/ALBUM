@@ -142,7 +142,17 @@ def main() -> None:
     for name in ("input_image", "input_gps", "output"):
         (package / name).mkdir(exist_ok=True)
     copy_runtime_licenses(package)
+    try:
+        commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+        dirty = bool(
+            subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT, text=True).strip()
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        commit = "unavailable"
+        dirty = None
     metadata = {
+        "source_commit": commit,
+        "uncommitted_changes": dirty,
         "python": sys.version,
         "platform": platform.platform(),
         "architecture": platform.machine(),

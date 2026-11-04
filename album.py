@@ -221,9 +221,12 @@ def local_timezone() -> timezone:
 
 
 def enable_line_buffering() -> None:
-    reconfigure = getattr(sys.stdout, "reconfigure", None)
-    if callable(reconfigure):
-        reconfigure(line_buffering=True)
+    # Redirected Windows streams may otherwise use a code page that cannot
+    # represent filenames. Keep CLI logs portable without changing OS settings.
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(encoding="utf-8", errors="backslashreplace", line_buffering=True)
 
 
 def emit(message: str) -> None:
@@ -389,8 +392,26 @@ def refresh_copy_provenance(path: Path, previous_hash: str) -> None:
 
 
 def run_exiftool(command: list[str]) -> subprocess.CompletedProcess:
+    """Pass UTF-8 arguments through stdin, avoiding Windows argv recoding.
+
+    ExifTool requires filename=UTF8 before -@ to enable wide-character file I/O.
+    Each argument occupies one unquoted line; paths containing line breaks are
+    rejected so a filename can never introduce another ExifTool option.
+    """
+    arguments = command[1:]
+    if any(any(character in argument for character in "\r\n\0") for argument in arguments):
+        raise RuntimeError("ExifTool arguments cannot contain CR, LF, or NUL control characters")
     try:
-        result = subprocess.run(command, capture_output=True, text=True, check=False, timeout=120)
+        result = subprocess.run(
+            [command[0], "-charset", "filename=UTF8", "-@", "-"],
+            input="\n".join(arguments) + "\n",
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            timeout=120,
+        )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise RuntimeError(f"Cannot run ExifTool: {exc}") from exc
     if result.returncode:

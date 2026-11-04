@@ -12,7 +12,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-15
+          - os: macos-26
             executable: dist/album/album
             exiftool: dist/album/exiftool/exiftool
             platform: macOS-arm64

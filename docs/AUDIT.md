@@ -22,10 +22,11 @@ The work applies [ai-biocode-kata](https://github.com/dritoshi/ai-biocode-kata/t
 | Symbolic links could target data outside a project; frozen paths would resolve into runtime files. | Exclude links, reject linked data folders, use executable location and `--project-dir`. | Discovery regression and frozen smoke with a separate project directory. |
 | CSV basenames were ambiguous for repeated names in subfolders. | Write project-relative paths. | Real integration CSV assertion. |
 | No automated tests or native build configuration. | Regression tests, lint/format settings, macOS/Windows CI, bundled-runtime packages and checksums. | See commands below and Actions results. |
+| Windows CI exposed code-page loss in Japanese filenames passed to ExifTool. | Send UTF-8 arguments through stdin with `filename=UTF8` before `-@`; preserve UTF-8 redirected logs. | Unicode transport regression, control-character rejection, and native JPEG/GPX smoke retaining Japanese paths and adding Japanese/accented filenames. |
 
 ## Validation
 
-The first targeted suite had 12 tests: 11 failed against the baseline and one passed. After fixes and additional safety cases, **23 tests pass** locally. This records a demonstrated improvement rather than a claim that all possible bugs are excluded.
+The first targeted suite had 12 tests: 11 failed against the baseline and one passed. After fixes, additional safety cases, and four regressions for the Windows Unicode transport, **27 tests pass** locally. The Unicode transport regression failed before the fix. This records a demonstrated improvement rather than a claim that all possible bugs are excluded.
 
 ```bash
 python -m pytest -q
@@ -40,7 +41,7 @@ The integration test uses a generated JPEG and two timed GPX points. It verifies
 
 Local frozen verification completed on macOS 15.7.9 ARM64 using Python 3.13.9, PyInstaller 6.20.0, and bundled ExifTool 13.55. Both source and standalone executable passed the JPEG/GPX round trip. The package's build metadata records the full environment; the CI environment uses Python 3.12 and is checked separately.
 
-Native CI must pass on each platform before its archive is released. Windows CI validates automated execution on Windows Server 2022; hands-on Windows 10/11 acceptance remains separate. See the release notes and [Actions](https://github.com/yoneoka-katsuhiro/ALBUM/actions) for the outcome of the specific published build.
+Native tests must pass on the target operating system before its archive is released; CI is preferred. If macOS CI is queued, a locally built archive may be released after the same native tests pass. Release notes must identify the build environment and distinguish local macOS verification from Windows CI verification. Windows CI validates automated execution on Windows Server 2022; hands-on Windows 10/11 acceptance remains separate. See the release notes and [Actions](https://github.com/yoneoka-katsuhiro/ALBUM/actions) for the outcome of the specific published build.
 
 ## Remaining limits / 残る制約
 

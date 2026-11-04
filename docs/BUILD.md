@@ -1,6 +1,6 @@
 # Build and verification / ビルドと検証
 
-The runtime code uses Python's standard library and calls ExifTool. Pillow, pytest, Ruff, and PyInstaller are development tools, not application dependencies. Python 3.11+ can run the source; the release workflow uses Python 3.12 on macOS 15 ARM64 and Windows Server 2022 x64.
+The runtime code uses Python's standard library and calls ExifTool. Pillow, pytest, Ruff, and PyInstaller are development tools, not application dependencies. Python 3.11+ can run the source; the release workflow uses Python 3.12 on macOS 26 ARM64 and Windows Server 2022 x64.
 
 実行コードはPython標準ライブラリとExifToolを使います。Pillowなどは検証・配布作成用です。Windows版はWindows上、macOS版はmacOS上で作成します。クロスコンパイルは行いません。
 
@@ -19,7 +19,7 @@ python -m pytest -q
 python scripts/smoke_test.py
 ```
 
-The last command requires ExifTool in PATH. It creates a temporary synthetic JPEG and GPX, runs the real CLI twice, checks interpolated coordinates, compares original SHA-256 and decoded pixels, and verifies duplicate handling. It uses a directory name containing spaces and Japanese characters. It does not process personal data.
+The last command requires ExifTool in PATH. It creates a temporary synthetic JPEG and GPX, runs the real CLI twice, checks interpolated coordinates, compares original SHA-256 and decoded pixels, and verifies duplicate handling. Both the directory and JPEG filenames contain spaces and Japanese characters; the filenames also contain an accented Latin character. It does not process personal data.
 
 最後のコマンドは実際のExifToolを使い、合成JPEG・GPXを一時フォルダーで処理します。座標、原本ハッシュ、デコード画素、再実行時の重複除外を検証します。個人の写真は使いません。
 
@@ -33,7 +33,9 @@ The script downloads ExifTool 13.55 from the project's SourceForge distribution,
 
 Existing archives in `vendor` are reused only after checksum verification. An offline cache can be selected with `--archive-cache PATH`. Do not replace an archive without reviewing its version, checksum, license, and compatibility. macOS uses `/usr/bin/env perl` from the operating system; Python is bundled. Windows includes ExifTool's own Perl runtime. See [ExifTool's installation instructions](https://github.com/exiftool/exiftool/blob/13.55/html/install.html).
 
-The generated `dist/album` directory includes the executable, `_internal`, ExifTool, manuals, licenses, empty data folders, and `BUILD_INFO.json`. The ZIP filename identifies version, OS, and architecture. A matching `.zip.sha256` file records its digest. Build metadata records Python, platform, architecture, ExifTool, and the installed build packages.
+The generated `dist/album` directory includes the executable, `_internal`, ExifTool, manuals, licenses, empty data folders, and `BUILD_INFO.json`. The ZIP filename identifies version, OS, and architecture. A matching `.zip.sha256` file records its digest. Build metadata records the source commit and whether tracked or untracked changes were present, plus Python, platform, architecture, ExifTool, and the installed build packages. If Git metadata is unavailable, the commit is `unavailable` and the change state is `null`.
+
+ExifTool calls send an explicitly UTF-8 argument file through standard input using `-charset filename=UTF8 -@ -`. This avoids Windows command-line code-page conversion for Japanese paths. ALBUM also writes UTF-8 console/redirected logs without changing the operating system code page. See the [official ExifTool Windows filename documentation](https://exiftool.org/exiftool_pod.html#WINDOWS-UNICODE-FILE-NAMES).
 
 macOS verification:
 

@@ -14,16 +14,21 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from album import enable_line_buffering, run_exiftool  # noqa: E402
 
 
 def run(command: list[str]) -> str:
-    result = subprocess.run(command, capture_output=True, text=True, timeout=120)
+    result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", timeout=120)
     if result.returncode:
         raise RuntimeError(f"Command failed: {command}\n{result.stdout}\n{result.stderr}")
     return result.stdout
 
 
-def exercise(project: Path, command: list[str], exiftool: str) -> str:
+def exercise(
+    project: Path, command: list[str], exiftool: str, *, unicode_filenames: bool = True
+) -> str:
     inputs = project / "input_image"
     gps = project / "input_gps"
     inputs.mkdir(parents=True)
@@ -33,9 +38,9 @@ def exercise(project: Path, command: list[str], exiftool: str) -> str:
     draw.rectangle((36, 36, 604, 384), fill="#1d5244")
     draw.ellipse((220, 110, 420, 310), fill="#d8b869")
     draw.text((64, 62), "ALBUM / SYNTHETIC JPEG FIXTURE", fill="white")
-    photo = inputs / "sample.jpg"
+    photo = inputs / ("sample_日本語 café.jpg" if unicode_filenames else "sample.jpg")
     image.save(photo, quality=92)
-    run(
+    run_exiftool(
         [
             exiftool,
             "-overwrite_original",
@@ -45,7 +50,8 @@ def exercise(project: Path, command: list[str], exiftool: str) -> str:
         ]
     )
     original = photo.read_bytes()
-    (inputs / "duplicate.jpg").write_bytes(original)
+    duplicate = inputs / ("duplicate_日本語 café.jpg" if unicode_filenames else "duplicate.jpg")
+    duplicate.write_bytes(original)
     (gps / "route.gpx").write_text(
         """<?xml version="1.0"?>
 <gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1"><trk><trkseg>
@@ -69,9 +75,9 @@ def exercise(project: Path, command: list[str], exiftool: str) -> str:
     assert "Copied: 1" in first and "Duplicates skipped: 1" in first
     assert "GPS coordinates added: 1" in first and "Errors: 0" in first
     target = project / "output" / "20260102_field" / "20260102_demo0001_field.jpg"
-    tags = json.loads(run([exiftool, "-json", "-n", "-GPSLatitude", "-GPSLongitude", str(target)]))[
-        0
-    ]
+    tags = json.loads(
+        run_exiftool([exiftool, "-json", "-n", "-GPSLatitude", "-GPSLongitude", str(target)]).stdout
+    )[0]
     assert abs(tags["GPSLatitude"] - 35.001) < 0.000001
     assert abs(tags["GPSLongitude"] - 139.001) < 0.000001
     with Image.open(photo) as before, Image.open(target) as after:
@@ -90,6 +96,7 @@ def exercise(project: Path, command: list[str], exiftool: str) -> str:
 
 
 def main() -> None:
+    enable_line_buffering()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--executable", type=Path)
     parser.add_argument("--exiftool", type=Path)
